@@ -7,7 +7,7 @@ Bootstraps a Mac at enrollment from an [InstallApplications](https://github.com/
 ## Requirements
 
 - macOS 14 or later
-- Swift 6.0 or later (Xcode 16+)
+- Swift 6.1 or later (Xcode 16.4 or later), the oldest toolchain CI checks
 
 ## Build and test
 
