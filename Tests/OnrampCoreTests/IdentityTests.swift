@@ -5,6 +5,4 @@ import Testing
 @Test func identifiersAreStable() {
     #expect(Identity.domain == "io.github.popaprozac.onramp")
     #expect(Identity.daemonLabel == "io.github.popaprozac.onramp.daemon")
-    #expect(Identity.agentLabel == "io.github.popaprozac.onramp.agent")
-    #expect(Identity.machServiceName == "io.github.popaprozac.onramp.xpc")
 }

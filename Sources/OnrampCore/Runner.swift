@@ -24,6 +24,17 @@ public struct ItemResult: Sendable, Equatable {
     public let status: Status
 }
 
+extension ItemResult: CustomStringConvertible {
+    public var description: String {
+        let outcome = switch status {
+        case let .done(detail): detail
+        case let .skipped(reason): "skipped: \(reason)"
+        case let .failed(reason, stopped): "failed: \(reason)" + (stopped ? ", stopping the run" : "")
+        }
+        return "\(phase.rawValue) \"\(name)\": \(outcome)"
+    }
+}
+
 public struct Report: Sendable {
     public enum Outcome: Sendable, Equatable {
         case completed
@@ -86,10 +97,8 @@ public struct Runner: Sendable {
 
         switch item.type {
         case .package:
-            if !item.required, let id = item.packageID, let version = item.version,
-               let installed = await actions.installedVersion(ofPackage: id),
-               LooseVersion(installed) >= LooseVersion(version) {
-                return .skipped("installed version \(installed) is at or above \(version)")
+            if let installed = await installedVersionToKeep(item) {
+                return .skipped("installed version \(installed) is at or above \(item.version ?? "")")
             }
             if let failure = await download(item) { return failure }
             do {
@@ -110,6 +119,23 @@ public struct Runner: Sendable {
                 return failed(item, .execution, "could not run: \(error)")
             }
         }
+    }
+
+    /// Downloads `phase`'s files ahead of time, skipping what the run would skip. The daemon does this for
+    /// userland before anyone logs in. A failed download is left for the run itself to retry and report.
+    public func prefetch(_ bootstrap: Bootstrap, phase: Phase) async {
+        for item in bootstrap[phase] where item.url != nil && skipReason(item) == nil {
+            if item.type == .package, await installedVersionToKeep(item) != nil { continue }
+            try? await actions.download(item)
+        }
+    }
+
+    /// The installed version, when the receipt says the package needn't be installed again.
+    private func installedVersionToKeep(_ item: Item) async -> String? {
+        guard !item.required, let id = item.packageID, let version = item.version,
+              let installed = await actions.installedVersion(ofPackage: id),
+              LooseVersion(installed) >= LooseVersion(version) else { return nil }
+        return installed
     }
 
     /// onramp applies `skip_if` to every item type; upstream only checks it on packages.

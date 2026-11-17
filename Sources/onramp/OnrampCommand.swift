@@ -7,6 +7,6 @@ struct OnrampCommand: AsyncParsableCommand {
         commandName: "onramp",
         abstract: "Bootstraps a Mac at enrollment from an InstallApplications-style bootstrap.json.",
         version: Identity.version,
-        subcommands: [Validate.self, Run.self]
+        subcommands: [Validate.self, Run.self, DaemonCommand.self, WaitDesktopCommand.self, Debug.self]
     )
 }

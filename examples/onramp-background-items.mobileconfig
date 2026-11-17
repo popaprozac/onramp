@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Marks onramp's LaunchDaemon as managed, so users don't get a "Background Items Added" notice for it
+     during enrollment. Replace the PayloadUUIDs with your own (uuidgen). -->
+<plist version="1.0">
+<dict>
+    <key>PayloadDisplayName</key>
+    <string>onramp background item</string>
+    <key>PayloadIdentifier</key>
+    <string>io.github.popaprozac.onramp.backgrounditems</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>92130F7F-5769-4035-ABBE-8AB95B3D7FA2</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadDisplayName</key>
+            <string>Managed login items</string>
+            <key>PayloadIdentifier</key>
+            <string>io.github.popaprozac.onramp.backgrounditems.servicemanagement</string>
+            <key>PayloadType</key>
+            <string>com.apple.servicemanagement</string>
+            <key>PayloadUUID</key>
+            <string>B4D7AE69-BFE3-4A01-908D-857EFD98B795</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>Rules</key>
+            <array>
+                <dict>
+                    <key>RuleType</key>
+                    <string>Label</string>
+                    <key>RuleValue</key>
+                    <string>io.github.popaprozac.onramp.daemon</string>
+                    <key>Comment</key>
+                    <string>onramp's LaunchDaemon</string>
+                </dict>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

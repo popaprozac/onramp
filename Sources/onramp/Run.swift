@@ -1,27 +1,85 @@
 import ArgumentParser
+import Foundation
 import OnrampCore
+import OnrampPlatform
 
+/// IT's way to rerun setup without reimaging, from Self Service, Munki or Terminal.
 struct Run: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Run a bootstrap.json. Only --dry-run is supported so far."
+        abstract: "Run the bootstrap now, in the foreground.",
+        discussion: """
+        Without a path, it fetches the bootstrap the profile points at. If onramp's daemon is still loaded, it's \
+        stopped first, so the two never run at once. A run that succeeds removes onramp, as the daemon does. Any \
+        other result leaves everything in place, and a stopped daemon comes back at the next boot.
+        """
     )
 
     @Flag(help: "Show what would happen without downloading, installing or running anything.")
     var dryRun = false
 
-    @Argument(help: "Path to bootstrap.json.")
-    var path: String
+    @Flag(help: "Run setupassistant and userland even if preflight would say this Mac is already set up.")
+    var skipPreflight = false
+
+    @Argument(help: "A bootstrap.json to run instead of the profile's.")
+    var path: String?
 
     func validate() throws {
-        guard dryRun else { throw ValidationError("only --dry-run is supported so far") }
+        guard dryRun || getuid() == 0 else { throw ValidationError("run needs root: sudo onramp run") }
     }
 
-    func run() async throws {
-        let bootstrap = try loadBootstrap(path)
-        let actions = DryRunActions(preflightFiles: Set(bootstrap[.preflight].map(\.file)))
+    var phases: [Phase] { skipPreflight ? [.setupassistant, .userland] : Phase.allCases }
 
+    func run() async throws {
+        let config = SystemDaemonEnvironment.currentConfig()
+        let downloader = SystemDaemonEnvironment.downloader(for: config)
+        let bootstrap = try await load(config, downloader)
+        if dryRun {
+            try await dryRun(bootstrap)
+        } else {
+            try await rerun(bootstrap, downloader)
+        }
+    }
+
+    /// From `path`, or freshly from the profile: never the daemon's cached copy, which may be what went wrong.
+    private func load(_ config: Result<Config, ConfigError>, _ downloader: Downloader) async throws -> Bootstrap {
+        if let path { return try loadBootstrap(path) }
+        do {
+            return try await SystemDaemonEnvironment.freshBootstrap(config.get(), downloader: downloader).bootstrap
+        } catch {
+            print("error: \(error). Pass a bootstrap.json path to run one directly.")
+            throw ExitCode.failure
+        }
+    }
+
+    private func rerun(_ bootstrap: Bootstrap, _ downloader: Downloader) async throws {
+        let daemon = "system/\(Identity.daemonLabel)"
+        if Host.isLoaded(daemon) {
+            Log.line("stopping onramp's daemon so it doesn't run alongside this; unless this run succeeds, it comes back at the next boot")
+            guard await Uninstaller.launchctlBootout(daemon) else {
+                Log.line("couldn't stop the daemon, so not running")
+                throw ExitCode.failure
+            }
+        }
+        let user = ConsoleUsers.current().flatMap { $0.isRealUser ? $0 : nil }
+        Log.line(user.map { "userscripts will run as \($0.name)" } ?? "no one is logged in, so userscripts will fail")
+
+        let runner = Runner(actions: SystemActions(downloader: downloader, user: user), isAppleSilicon: Host.isAppleSilicon)
+        let report = await runner.run(bootstrap, phases: phases) { Log.line("\($0)") }
+        let status = Status(report)
+        do { try Uninstaller.writeStatus(status, failedAttempts: report.outcome == .failed ? 1 : 0) } catch { Log.line("\(error)") }
+        Log.line("finished: \(status.result.rawValue)" + (status.error.map { ", \($0)" } ?? ""))
+        guard status.isSuccess else { throw ExitCode.failure }
+
+        Log.line("uninstalling onramp")
+        // The daemon is already stopped, so its bootout step would only report a failure.
+        _ = await Uninstaller.run(Layout.system.uninstallSteps(keepBinary: false).filter { $0 != .bootout(daemon) })
+    }
+
+    private func dryRun(_ bootstrap: Bootstrap) async throws {
+        let actions = DryRunActions(preflightFiles: Set(bootstrap[.preflight].map(\.file)))
         print("dry run: nothing is downloaded, installed or run. Package receipts are read from this Mac, and every preflight script is assumed to exit non-zero (not provisioned).")
-        let report = await Runner(actions: actions, isAppleSilicon: Host.isAppleSilicon).run(bootstrap) { result in
+        let runner = Runner(actions: actions, isAppleSilicon: Host.isAppleSilicon)
+        let show: (ItemResult) async -> Void = { result in
             let planned = await actions.takePlanned()
             print("\(result.phase.rawValue): \(result.name)")
             switch result.status {
@@ -30,8 +88,19 @@ struct Run: AsyncParsableCommand {
             case let .failed(reason, stopped): print("  failed: \(reason)" + (stopped ? ", stopping the run" : ""))
             }
         }
-        print("outcome: \(report.outcome)")
-        if report.outcome == .failed { throw ExitCode.failure }
+        var outcome = await runner.run(bootstrap, phases: phases.filter { $0 != .userland }, onResult: show).outcome
+        if phases.contains(.userland), outcome == .completed {
+            // Show where the daemon waits for the desktop, so the hand-off from Setup Assistant is visible.
+            let (early, rest) = bootstrap.userlandAroundDesktopWait
+            print("userland: the daemon waits here for someone to log in")
+            outcome = await runner.run(Bootstrap(userland: early), phases: [.userland], onResult: show).outcome
+            if outcome == .completed {
+                print("userland: then waits for Setup Assistant to close, and for Dock and Finder")
+                outcome = await runner.run(Bootstrap(userland: rest), phases: [.userland], onResult: show).outcome
+            }
+        }
+        print("outcome: \(outcome)")
+        if outcome == .failed { throw ExitCode.failure }
     }
 }
 

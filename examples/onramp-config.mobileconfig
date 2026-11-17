@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- onramp's settings. Replace the JSONURL, and the PayloadUUIDs with your own (uuidgen).
+     Set JSONURL or Bootstrap, not both. See the README's Configuration section. -->
+<plist version="1.0">
+<dict>
+    <key>PayloadDisplayName</key>
+    <string>onramp</string>
+    <key>PayloadIdentifier</key>
+    <string>io.github.popaprozac.onramp.config</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>F055A241-7D64-4AD3-B264-F8B3D622B936</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadDisplayName</key>
+            <string>onramp settings</string>
+            <key>PayloadIdentifier</key>
+            <string>io.github.popaprozac.onramp.config.settings</string>
+            <key>PayloadType</key>
+            <string>io.github.popaprozac.onramp</string>
+            <key>PayloadUUID</key>
+            <string>67A1C0FC-9B25-456A-9E52-5C0EE1F71666</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>JSONURL</key>
+            <string>https://example.com/onramp/bootstrap.json</string>
+            <!-- Optional: sent only to JSONURL's host. -->
+            <key>Headers</key>
+            <dict>
+                <key>Authorization</key>
+                <string>Bearer REPLACE-ME</string>
+            </dict>
+            <key>MaxAttempts</key>
+            <integer>3</integer>
+        </dict>
+    </array>
+</dict>
+</plist>

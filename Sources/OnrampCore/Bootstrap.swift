@@ -1,6 +1,6 @@
 import Foundation
 
-public enum Phase: String, CaseIterable, Sendable {
+public enum Phase: String, CaseIterable, Codable, Sendable {
     case preflight, setupassistant, userland
 }
 
@@ -19,6 +19,19 @@ public struct Bootstrap: Decodable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey { case preflight, setupassistant, userland }
+
+    public init(preflight: [Item] = [], setupassistant: [Item] = [], userland: [Item] = []) {
+        self.preflight = preflight
+        self.setupassistant = setupassistant
+        self.userland = userland
+    }
+
+    /// Userland split where onramp waits for the desktop: the leading items with `wait_for_desktop: false`
+    /// run as soon as the user's session exists, and the rest run once the desktop is ready.
+    public var userlandAroundDesktopWait: (early: [Item], rest: [Item]) {
+        let early = userland.prefix { !$0.waitForDesktop }
+        return (Array(early), Array(userland.dropFirst(early.count)))
+    }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -62,11 +75,14 @@ public struct Item: Decodable, Sendable {
     public var retryWait: Int
     /// onramp extension; not part of upstream IA.
     public var failPolicy: FailPolicy
+    /// onramp extension. Userland only: when false, the item can start while the per-user Setup Assistant is
+    /// still on screen, for example a full-screen dialog that should already be up when Setup Assistant closes.
+    public var waitForDesktop: Bool
 
     enum CodingKeys: String, CodingKey {
         case name, file, type, url, hash, version, required, retries
         case packageID = "packageid", doNotWait = "donotwait", skipIf = "skip_if"
-        case retryWait = "retrywait", failPolicy = "fail_policy"
+        case retryWait = "retrywait", failPolicy = "fail_policy", waitForDesktop = "wait_for_desktop"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -85,6 +101,7 @@ public struct Item: Decodable, Sendable {
         retries = try c.decodeIfPresent(Int.self, forKey: .retries) ?? 3
         retryWait = try c.decodeIfPresent(Int.self, forKey: .retryWait) ?? 5
         failPolicy = try c.decodeIfPresent(FailPolicy.self, forKey: .failPolicy) ?? .failableExecution
+        waitForDesktop = try c.decodeIfPresent(Bool.self, forKey: .waitForDesktop) ?? true
     }
 }
 
