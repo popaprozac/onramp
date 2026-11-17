@@ -12,13 +12,17 @@ let package = Package(
     ],
     targets: [
         .target(name: "OnrampCore"),
+        // Everything that touches the system: processes, packages, launchd, the console user.
+        .target(name: "OnrampPlatform", dependencies: ["OnrampCore"]),
         .executableTarget(
             name: "onramp",
             dependencies: [
                 "OnrampCore",
+                "OnrampPlatform",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
         .testTarget(name: "OnrampCoreTests", dependencies: ["OnrampCore"]),
+        .testTarget(name: "OnrampPlatformTests", dependencies: ["OnrampCore", "OnrampPlatform"]),
     ]
 )

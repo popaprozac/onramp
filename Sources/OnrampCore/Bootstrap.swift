@@ -1,6 +1,6 @@
 import Foundation
 
-public enum Phase: String, CaseIterable, Sendable {
+public enum Phase: String, CaseIterable, Codable, Sendable {
     case preflight, setupassistant, userland
 }
 

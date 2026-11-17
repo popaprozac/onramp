@@ -1,5 +1,6 @@
 import ArgumentParser
 import OnrampCore
+import OnrampPlatform
 
 struct Run: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
