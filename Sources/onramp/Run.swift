@@ -78,7 +78,8 @@ struct Run: AsyncParsableCommand {
     private func dryRun(_ bootstrap: Bootstrap) async throws {
         let actions = DryRunActions(preflightFiles: Set(bootstrap[.preflight].map(\.file)))
         print("dry run: nothing is downloaded, installed or run. Package receipts are read from this Mac, and every preflight script is assumed to exit non-zero (not provisioned).")
-        let report = await Runner(actions: actions, isAppleSilicon: Host.isAppleSilicon).run(bootstrap, phases: phases) { result in
+        let runner = Runner(actions: actions, isAppleSilicon: Host.isAppleSilicon)
+        let show: (ItemResult) async -> Void = { result in
             let planned = await actions.takePlanned()
             print("\(result.phase.rawValue): \(result.name)")
             switch result.status {
@@ -87,8 +88,19 @@ struct Run: AsyncParsableCommand {
             case let .failed(reason, stopped): print("  failed: \(reason)" + (stopped ? ", stopping the run" : ""))
             }
         }
-        print("outcome: \(report.outcome)")
-        if report.outcome == .failed { throw ExitCode.failure }
+        var outcome = await runner.run(bootstrap, phases: phases.filter { $0 != .userland }, onResult: show).outcome
+        if phases.contains(.userland), outcome == .completed {
+            // Show where the daemon waits for the desktop, so the hand-off from Setup Assistant is visible.
+            let (early, rest) = bootstrap.userlandAroundDesktopWait
+            print("userland: the daemon waits here for someone to log in")
+            outcome = await runner.run(Bootstrap(userland: early), phases: [.userland], onResult: show).outcome
+            if outcome == .completed {
+                print("userland: then waits for Setup Assistant to close, and for Dock and Finder")
+                outcome = await runner.run(Bootstrap(userland: rest), phases: [.userland], onResult: show).outcome
+            }
+        }
+        print("outcome: \(outcome)")
+        if outcome == .failed { throw ExitCode.failure }
     }
 }
 

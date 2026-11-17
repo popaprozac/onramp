@@ -78,6 +78,13 @@ Phases run in order: `preflight`, `setupassistant`, then `userland`. Within a ph
 
 Upstream ignores failed package installs.
 
+`wait_for_desktop` is also an onramp addition, for userland items only, and defaults to `true`.
+- Normally userland waits until the user's desktop is ready (see [How the daemon runs](#how-the-daemon-runs)).
+- Items at the **start** of `userland` with `"wait_for_desktop": false` run as soon as the user is logged in, even while the per-user Setup Assistant screens are still up. Then onramp waits for the desktop and runs the rest.
+- On an item after one that waits, the key has no effect, and `validate` warns about it.
+
+The use case is a full-screen dialog that should already cover the desktop when Setup Assistant closes. For example, swiftDialog installed in `setupassistant`, then started first in `userland` with `--blurscreen`, `donotwait` and `"wait_for_desktop": false`. In testing on macOS 27.2.1, swiftDialog started this way stayed behind Setup Assistant, which remained on top and clickable, and was already up when Setup Assistant closed. Test other apps the same way before relying on them: an app that draws above Setup Assistant would stop the user finishing it. `run --dry-run` shows where the waits fall.
+
 ## Configuration
 
 The daemon reads the `io.github.popaprozac.onramp` preferences domain, normally from a configuration profile. A profile's values win over any others.
@@ -95,7 +102,7 @@ Until `JSONURL` or `Bootstrap` is set, the daemon waits and checks again every 1
 
 1. **preflight** and **setupassistant** run as soon as the daemon starts, which is normally while Setup Assistant is still on screen.
 2. Userland files are downloaded next, before anyone logs in.
-3. **userland** waits for someone to log in, then for their desktop: the per-user Setup Assistant screens closed, and Dock and Finder running.
+3. **userland** waits for someone to log in. Leading items with `"wait_for_desktop": false` start then. After that it waits for the user's desktop, meaning the per-user Setup Assistant screens closed and Dock and Finder running, and runs the rest.
    - It waits as long as Setup Assistant is open.
    - Without Setup Assistant, it carries on after 2 minutes if Dock or Finder never appears.
 4. At the end it records the result and uninstalls itself (below).

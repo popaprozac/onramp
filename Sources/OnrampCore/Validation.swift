@@ -15,6 +15,7 @@ extension Bootstrap {
     /// Warnings are things upstream tolerates but that are probably mistakes.
     public func validate() -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
+        let earlyUserland = userlandAroundDesktopWait.early.count
         for phase in Phase.allCases {
             for (index, item) in self[phase].enumerated() {
                 let location = "\(phase.rawValue)[\(index)] \"\(item.name)\""
@@ -57,6 +58,13 @@ extension Bootstrap {
                 }
                 if phase == .setupassistant, item.type == .userscript {
                     warning("userscripts cannot run during Setup Assistant and will be skipped")
+                }
+                if !item.waitForDesktop, phase != .userland {
+                    warning("wait_for_desktop only applies to userland")
+                }
+                if !item.waitForDesktop, phase == .userland, index >= earlyUserland {
+                    // Items run in order, so an earlier item has already waited for the desktop.
+                    warning("wait_for_desktop has no effect after an item that waits for the desktop")
                 }
             }
         }

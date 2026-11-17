@@ -48,22 +48,34 @@ public struct Daemon: Sendable {
 
         for phase in state.remaining {
             var user: ConsoleUser?
+            var items = bootstrap
+            var earlyFailures: [String] = []
             if phase == .userland {
                 await runner(for: nil).prefetch(bootstrap, phase: .userland)
                 let someone = await environment.waitForUser()
                 await environment.log("\(someone.name) (uid \(someone.uid)) is logged in")
-                await environment.waitForDesktop(of: someone)
                 user = someone
+                let (early, rest) = bootstrap.userlandAroundDesktopWait
+                if !early.isEmpty {
+                    // Started before the desktop wait, so a full-screen dialog is already up when Setup Assistant
+                    // closes. A restart here costs nothing and simply starts them again.
+                    await environment.log("starting \(early.count) userland item(s) that don't wait for the desktop")
+                    let report = await runner(for: someone).run(Bootstrap(userland: early), phases: [.userland]) { await environment.log("\($0)") }
+                    if report.outcome == .failed { return await fail(Status(report).error ?? "userland failed", &state) }
+                    earlyFailures = report.failedItems
+                }
+                await environment.waitForDesktop(of: someone)
+                items = Bootstrap(userland: rest)
             }
             // Marked as running only now, so a restart while waiting for a login doesn't count as an attempt.
             state.start(phase)
             await environment.save(state)
             await environment.log("starting \(phase.rawValue)")
 
-            let report = await runner(for: user).run(bootstrap, phases: [phase]) { await environment.log("\($0)") }
+            let report = await runner(for: user).run(items, phases: [phase]) { await environment.log("\($0)") }
             switch report.outcome {
             case .completed:
-                state.complete(phase, failedItems: report.failedItems)
+                state.complete(phase, failedItems: earlyFailures + report.failedItems)
                 await environment.save(state)
             case .alreadyProvisioned:
                 state.complete(phase)

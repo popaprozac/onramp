@@ -154,3 +154,39 @@ func desktopIsReadyOnlyWithDockAndFinderAndNoSetupAssistant(running: [String], s
     #expect(await daemon(env) == .finished(Status(result: .completedWithFailures, error: #"setupassistant "sa": exited 4; userland "u": exited 2"#)))
     #expect(await env.events.last == "finish completed_with_failures failed=0")
 }
+
+func withEarlyDialog(_ extra: String = "") throws -> Bootstrap {
+    try bootstrap(setupassistant: [script("sa")],
+                  userland: [script("dialog", "userscript", #", "donotwait": true, "wait_for_desktop": false"# + extra), script("u", "userscript")])
+}
+
+@Test func earlyItemsRunAfterLoginButBeforeTheDesktopWait() async throws {
+    let env = FakeEnvironment(state: RunState(completed: [.preflight]), bootstrap: try withEarlyDialog())
+
+    #expect(await daemon(env) == .finished(Status(result: .completed)))
+    let events = await env.events
+    let at = { (event: String) in events.firstIndex(of: event) ?? -1 }
+    #expect(at("wait for user") < at("bench /dialog.sh"))
+    #expect(at("bench /dialog.sh") < at("wait for desktop"))
+    // A restart while Setup Assistant is still up must not count, so userland is marked only after the wait.
+    #expect(at("wait for desktop") < at("save running=userland"))
+    #expect(at("save running=userland") < at("bench /u.sh"))
+    #expect(events.filter { $0 == "bench /dialog.sh" }.count == 1)
+}
+
+@Test func anEarlyItemThatStopsTheRunNeverReachesTheDesktopWait() async throws {
+    // Without donotwait, so the script's exit status counts.
+    let boot = try bootstrap(userland: [script("dialog", "userscript", #", "wait_for_desktop": false, "fail_policy": "failure_is_not_an_option""#), script("u", "userscript")])
+    let env = FakeEnvironment(state: RunState(completed: [.preflight, .setupassistant]), bootstrap: boot, exitCodes: ["/dialog.sh": 1])
+
+    #expect(await daemon(env) == .retry)
+    #expect(!(await env.events.contains("wait for desktop")))
+    #expect(await env.lastSaved?.lastError == #"userland "dialog": exited 1"#)
+}
+
+@Test func anEarlyItemAllowedToFailIsInTheResult() async throws {
+    let boot = try bootstrap(userland: [script("dialog", "userscript", #", "wait_for_desktop": false"#), script("u", "userscript")])
+    let env = FakeEnvironment(state: RunState(completed: [.preflight, .setupassistant]), bootstrap: boot, exitCodes: ["/dialog.sh": 3])
+
+    #expect(await daemon(env) == .finished(Status(result: .completedWithFailures, error: #"userland "dialog": exited 3"#)))
+}

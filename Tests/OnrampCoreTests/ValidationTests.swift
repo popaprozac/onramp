@@ -50,9 +50,24 @@ func issues(_ item: String, in phase: String = "userland") throws -> [Validation
     (goodPackage, "preflight", .error, "preflight only supports rootscript"),
     (#"{"name": "a", "file": "/a", "type": "rootscript", "donotwait": true}"#, "preflight", .warning, "donotwait is ignored for preflight"),
     (#"{"name": "a", "file": "/a", "type": "userscript"}"#, "setupassistant", .warning, "userscripts cannot run during Setup Assistant and will be skipped"),
+    (#"{"name": "a", "file": "/a", "type": "rootscript", "wait_for_desktop": false}"#, "setupassistant", .warning, "wait_for_desktop only applies to userland"),
 ])
 func flagsExactlyOneIssue(item: String, phase: String, severity: ValidationIssue.Severity, message: String) throws {
     let found = try issues(item, in: phase)
     #expect(found.map(\.severity) == [severity])
     #expect(found.first?.message == message)
+}
+
+@Test func waitForDesktopOnlyWorksAtTheStartOfUserland() throws {
+    let boot = try decode(#"""
+    {"userland": [
+      {"name": "dialog", "file": "/d", "type": "userscript", "wait_for_desktop": false},
+      {"name": "dock", "file": "/k", "type": "userscript"},
+      {"name": "late", "file": "/l", "type": "userscript", "wait_for_desktop": false}
+    ]}
+    """#)
+    #expect(boot.validate().map(\.description) == [#"warning: userland[2] "late": wait_for_desktop has no effect after an item that waits for the desktop"#])
+    #expect(boot.userlandAroundDesktopWait.early.map(\.name) == ["dialog"])
+    #expect(boot.userlandAroundDesktopWait.rest.map(\.name) == ["dock", "late"])
+    #expect(boot.userland[1].waitForDesktop)  // the default
 }
