@@ -5,6 +5,4 @@ public enum Identity {
     /// Bundle identifier and managed-preferences domain.
     public static let domain = "io.github.popaprozac.onramp"
     public static let daemonLabel = domain + ".daemon"
-    public static let agentLabel = domain + ".agent"
-    public static let machServiceName = domain + ".xpc"
 }

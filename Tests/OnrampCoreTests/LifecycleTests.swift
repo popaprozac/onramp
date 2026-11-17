@@ -82,12 +82,8 @@ import Testing
 }
 
 @Test func uninstallFollowsUpstreamOrder() {
-    let layout = Layout.system
-    #expect(layout.uninstallSteps(agentUIDs: [501, 502]) == [
+    #expect(Layout.system.uninstallSteps() == [
         .remove("/Library/LaunchDaemons/io.github.popaprozac.onramp.daemon.plist"),
-        .remove("/Library/LaunchAgents/io.github.popaprozac.onramp.agent.plist"),
-        .bootout("gui/501/io.github.popaprozac.onramp.agent"),
-        .bootout("gui/502/io.github.popaprozac.onramp.agent"),
         .remove("/Library/onramp"),
         .bootout("system/io.github.popaprozac.onramp.daemon"),
     ])

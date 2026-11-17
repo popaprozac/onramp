@@ -12,12 +12,7 @@ struct Debug: ParsableCommand {
     )
 }
 
-func log(_ message: String) {
-    let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: true))
-    FileHandle.standardOutput.write(Data("\(stamp) \(message)\n".utf8))
-}
-
-/// Run as the daemon: logs console-user changes and runs the real agent backup for each real user.
+/// Logs every console-user change, the way the daemon sees them, to watch logins.
 struct ConsoleUsersProbe: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "console-users")
 
@@ -25,28 +20,25 @@ struct ConsoleUsersProbe: AsyncParsableCommand {
         var boot = timeval()
         var size = MemoryLayout<timeval>.size
         sysctlbyname("kern.boottime", &boot, &size, nil, 0)
-        log("daemon started, booted \(Date(timeIntervalSince1970: TimeInterval(boot.tv_sec)))")
+        Log.line("watching console users, booted \(Date(timeIntervalSince1970: TimeInterval(boot.tv_sec)))")
 
         for await user in ConsoleUsers.updates() {
-            guard let user else { log("console: none"); continue }
-            log("console: \(user.name) uid=\(user.uid) real=\(user.isRealUser)")
-            guard user.isRealUser else { continue }
-            let outcome = await AgentLauncher.ensureLoaded(uid: user.uid, plist: Layout.system.agentPlist)
-            log("backup for uid \(user.uid): \(outcome)")
+            guard let user else { Log.line("console: none"); continue }
+            Log.line("console: \(user.name) uid=\(user.uid) real=\(user.isRealUser)")
         }
     }
 }
 
-/// Run as the agent: logs when it started, what was running, and every app launch and quit after that.
+/// Run in a user's session: logs when it started, what was running, and every app launch and quit after that.
 struct SessionProbe: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "session")
 
     func run() async throws {
         let uid = getuid()
         let name = ConsoleUsers.current()?.name ?? "?"
-        log("agent started uid=\(uid) console=\(name)")
+        Log.line("agent started uid=\(uid) console=\(name)")
         guard ConsoleUser(name: NSUserName(), uid: uid).isRealUser else {
-            log("agent: not a real user's session, exiting")
+            Log.line("agent: not a real user's session, exiting")
             return
         }
 
@@ -54,12 +46,12 @@ struct SessionProbe: AsyncParsableCommand {
         // thread Swift keeps serving while this task sleeps.
         await MainActor.run {
             let running = NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier).sorted()
-            log("running at start: \(running.joined(separator: " "))")
+            Log.line("running at start: \(running.joined(separator: " "))")
             let center = NSWorkspace.shared.notificationCenter
             for (notification, verb) in [(NSWorkspace.didLaunchApplicationNotification, "launched"), (NSWorkspace.didTerminateApplicationNotification, "quit")] {
                 center.addObserver(forName: notification, object: nil, queue: .main) { note in
                     let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-                    log("\(verb) \(app?.bundleIdentifier ?? app?.localizedName ?? "?")")
+                    Log.line("\(verb) \(app?.bundleIdentifier ?? app?.localizedName ?? "?")")
                 }
             }
         }

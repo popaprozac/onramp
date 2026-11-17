@@ -189,3 +189,19 @@ func failPolicyDecidesWhetherTheRunStops(policy: String?, failure: String, stops
     #expect(report.outcome == .failed)
     #expect(await fake.calls == ["root /check.sh", "result check", "root /a.sh", "result a", "root /bad.sh", "result bad"])
 }
+
+@Test func prefetchDownloadsOnlyWhatTheRunWouldInstallOrRun() async throws {
+    let fake = FakeActions(installed: ["com.current": "2.0"], failingDownloads: ["/broken.pkg"])
+    let boot = try bootstrap(userland: [
+        pkg("broken"),                                     // fails, and the rest still download
+        pkg("current"),                                    // receipt is new enough
+        pkg("intel", #", "skip_if": "apple_silicon""#),    // skipped on this Mac
+        pkg("forced", #", "required": true"#),
+        script("local"),                                   // nothing to download
+        script("remote", "userscript", #", "url": "https://x/remote.sh", "hash": "\#(goodHash)""#),
+    ])
+
+    await Runner(actions: fake, isAppleSilicon: true).prefetch(boot, phase: .userland)
+
+    #expect(await fake.calls.filter { $0.hasPrefix("download") } == ["download /broken.pkg", "download /forced.pkg", "download /remote.sh"])
+}

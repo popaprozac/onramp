@@ -62,32 +62,3 @@ public enum ConsoleUsers {
         }
     }
 }
-
-public enum AgentLauncher {
-    public enum Outcome: Equatable, Sendable {
-        /// launchd already had the agent loaded, normally because it started it at login.
-        case alreadyLoaded
-        case bootstrapped
-        case failed
-    }
-
-    /// Makes sure the agent is loaded in `uid`'s GUI session. It's the backup for when launchd didn't start it
-    /// at login, for example because onramp was installed after the user logged in.
-    ///
-    /// It checks first, so on a normal login it does nothing. Right after a login the session may not accept
-    /// a bootstrap yet, or launchd may load the agent at the same moment, so a failure is retried after `delay`.
-    public static func ensureLoaded(uid: UInt32, plist: String, tries: Int = 10, delay: Duration = .seconds(1),
-                                    launchctl: ([String]) async -> Int32 = runLaunchctl) async -> Outcome {
-        let service = "gui/\(uid)/\(Identity.agentLabel)"
-        for attempt in 1...max(tries, 1) {
-            if attempt > 1 { try? await Task.sleep(for: delay) }
-            if await launchctl(["print", service]) == 0 { return .alreadyLoaded }
-            if await launchctl(["bootstrap", "gui/\(uid)", plist]) == 0 { return .bootstrapped }
-        }
-        return .failed
-    }
-
-    public static func runLaunchctl(_ arguments: [String]) async -> Int32 {
-        (try? await Spawn.run("/bin/launchctl", arguments, wait: true, quiet: true)) ?? -1
-    }
-}

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OnrampCore
 @testable import OnrampPlatform
@@ -128,43 +129,63 @@ func onlyDetachedScriptsGetTheirOwnProcessGroup(detached: Bool) async throws {
 
 /// Records each bootout, and what was already gone from disk at that moment, to check the order.
 actor BootoutLog {
-    var calls: [(target: String, plistsGone: Bool, installGone: Bool)] = []
+    var calls: [(target: String, plistGone: Bool, installGone: Bool)] = []
     func record(_ target: String, _ layout: Layout) {
         let gone = { !FileManager.default.fileExists(atPath: $0) }
-        calls.append((target, gone(layout.daemonPlist) && gone(layout.agentPlist), gone(layout.installDirectory)))
+        calls.append((target, gone(layout.daemonPlist), gone(layout.installDirectory)))
     }
 }
 
+/// An installed-looking layout in `dir`: the daemon plist and an install folder with a state file.
 func scratchLayout(in dir: URL) throws -> Layout {
     let layout = Layout(installDirectory: dir.appendingPathComponent("onramp").path,
-                        launchDaemons: dir.appendingPathComponent("LaunchDaemons").path,
-                        launchAgents: dir.appendingPathComponent("LaunchAgents").path)
-    for path in [layout.installDirectory, layout.launchDaemons, layout.launchAgents] {
+                        launchDaemons: dir.appendingPathComponent("LaunchDaemons").path)
+    for path in [layout.installDirectory, layout.launchDaemons] {
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+    }
+    for path in [layout.daemonPlist, layout.stateFile] {
+        FileManager.default.createFile(atPath: path, contents: Data())
     }
     return layout
 }
 
-@Test func uninstallRemovesEverythingInOrderAndKeepsGoingAfterAFailure() async throws {
+@Test func uninstallRemovesEverythingBeforeUnloadingTheDaemon() async throws {
     let dir = try scratchDirectory()
     defer { try? FileManager.default.removeItem(at: dir) }
     let layout = try scratchLayout(in: dir)
-    for path in [layout.daemonPlist, layout.agentPlist, layout.stateFile] {
-        FileManager.default.createFile(atPath: path, contents: Data())
-    }
     let log = BootoutLog()
 
-    let failures = await Uninstaller.run(layout.uninstallSteps(agentUIDs: [501])) { target in
+    let failures = await Uninstaller.run(layout.uninstallSteps()) { target in
         await log.record(target, layout)
-        return target.hasPrefix("system/")  // the agent isn't loaded, so its bootout fails
+        return true
     }
 
-    #expect(failures == ["bootout gui/501/\(Identity.agentLabel)"])
+    #expect(failures.isEmpty)
     let calls = await log.calls
-    #expect(calls.map(\.target) == ["gui/501/\(Identity.agentLabel)", "system/\(Identity.daemonLabel)"])
-    #expect(calls.map(\.plistsGone) == [true, true])
-    #expect(calls.map(\.installGone) == [false, true])
-    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["LaunchAgents", "LaunchDaemons"])
+    #expect(calls.map(\.target) == ["system/\(Identity.daemonLabel)"])
+    #expect(calls.first?.plistGone == true)
+    #expect(calls.first?.installGone == true)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["LaunchDaemons"])
+}
+
+@Test func uninstallKeepsGoingAfterAStepFails() async throws {
+    let dir = try scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let layout = try scratchLayout(in: dir)
+    // A read-only folder makes removing the plist fail.
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: layout.launchDaemons)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: layout.launchDaemons) }
+    let log = BootoutLog()
+
+    let failures = await Uninstaller.run(layout.uninstallSteps()) { target in
+        await log.record(target, layout)
+        return true
+    }
+
+    #expect(failures.count == 1)
+    #expect(failures.first?.hasPrefix("remove \(layout.daemonPlist)") == true)
+    #expect(!FileManager.default.fileExists(atPath: layout.installDirectory))
+    #expect(await log.calls.map(\.target) == ["system/\(Identity.daemonLabel)"])
 }
 
 @Test func uninstallTreatsMissingFilesAsDone() async throws {
@@ -172,15 +193,9 @@ func scratchLayout(in dir: URL) throws -> Layout {
     defer { try? FileManager.default.removeItem(at: dir) }
     let layout = try scratchLayout(in: dir)
     try FileManager.default.removeItem(atPath: layout.installDirectory)
+    try FileManager.default.removeItem(atPath: layout.daemonPlist)
 
-    #expect(await Uninstaller.run(layout.uninstallSteps(agentUIDs: [])) { _ in true }.isEmpty)
-}
-
-@Test func quietSendsOutputToDevNull() async throws {
-    let dir = try scratchDirectory()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let body = #"[ /dev/fd/1 -ef /dev/null ] && [ /dev/fd/2 -ef /dev/null ]"#
-    #expect(try await Spawn.run(script(body, in: dir), wait: true, quiet: true) == 0)
+    #expect(await Uninstaller.run(layout.uninstallSteps()) { _ in true }.isEmpty)
 }
 
 @Test(.timeLimit(.minutes(1)))
@@ -201,30 +216,15 @@ func consoleUserUpdatesStartWithTheCurrentUserAndStopWhenCancelled() async {
     #expect(ConsoleUsers.liveSubscriptions.withLock { $0 } == 0)
 }
 
-/// Answers launchctl calls from a script of exit codes, and records them.
-actor FakeLaunchctl {
-    var exits: [Int32]
-    var calls: [String] = []
-    init(_ exits: [Int32]) { self.exits = exits }
-    func run(_ arguments: [String]) -> Int32 {
-        calls.append(arguments.joined(separator: " "))
-        return exits.isEmpty ? 1 : exits.removeFirst()
-    }
+@Test func userscriptsRunInTheUsersSessionAsTheUser() {
+    #expect(ConsoleUser(name: "bench", uid: 501).inSession("/a.sh", ["x"]) ==
+        ["asuser", "501", "/usr/bin/sudo", "-H", "-u", "bench", "--", "/a.sh", "x"])
 }
 
-let agentService = "gui/501/\(Identity.agentLabel)"
-
-@Test(arguments: [
-    ([0], AgentLauncher.Outcome.alreadyLoaded, ["print"]),        // launchd started it at login
-    ([113, 0], .bootstrapped, ["print", "bootstrap"]),             // installed after login
-    ([113, 5, 0], .alreadyLoaded, ["print", "bootstrap", "print"]), // launchd won the race
-    ([], .failed, ["print", "bootstrap", "print", "bootstrap", "print", "bootstrap"]),
-] as [([Int32], AgentLauncher.Outcome, [String])])
-func ensuresTheAgentIsLoadedOnlyWhenItIsNot(exits: [Int32], outcome: AgentLauncher.Outcome, verbs: [String]) async {
-    let fake = FakeLaunchctl(exits)
-    let result = await AgentLauncher.ensureLoaded(uid: 501, plist: "/L/agent.plist", tries: 3, delay: .milliseconds(1)) { await fake.run($0) }
-
-    #expect(result == outcome)
-    let expected = verbs.map { $0 == "print" ? "print \(agentService)" : "bootstrap gui/501 /L/agent.plist" }
-    #expect(await fake.calls == expected)
+@Test func waitsForTheDesktopOnlyAsLongAsItsNotReady() async {
+    // On this Mac the answer depends on what's running, so compare against the same check.
+    let expected = await MainActor.run {
+        DesktopState(running: Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))) == .ready
+    }
+    #expect(await Desktop.waitUntilReady(timeout: .milliseconds(100)) == expected)
 }

@@ -102,31 +102,26 @@ public struct Status: Equatable, Sendable {
 public struct Layout: Sendable {
     public var installDirectory: String
     public var launchDaemons: String
-    public var launchAgents: String
 
-    public static let system = Layout(installDirectory: "/Library/onramp", launchDaemons: "/Library/LaunchDaemons", launchAgents: "/Library/LaunchAgents")
+    public static let system = Layout(installDirectory: "/Library/onramp", launchDaemons: "/Library/LaunchDaemons")
 
-    public init(installDirectory: String, launchDaemons: String, launchAgents: String) {
+    public init(installDirectory: String, launchDaemons: String) {
         self.installDirectory = installDirectory
         self.launchDaemons = launchDaemons
-        self.launchAgents = launchAgents
     }
 
     public var stateFile: String { installDirectory + "/state.plist" }
     public var daemonPlist: String { "\(launchDaemons)/\(Identity.daemonLabel).plist" }
-    public var agentPlist: String { "\(launchAgents)/\(Identity.agentLabel).plist" }
 
     public enum UninstallStep: Equatable, Sendable {
         case remove(String)
-        /// A launchctl service target, like `gui/501/<label>`.
+        /// A launchctl service target, like `system/<label>`.
         case bootout(String)
     }
 
-    /// Upstream's cleanup order. The plists go first, so nothing loads again even if a later step fails.
+    /// Upstream's cleanup order. The plist goes first, so nothing loads again even if a later step fails.
     /// The daemon's own bootout is last because it ends this process. Logs in /var/log/onramp are kept.
-    public func uninstallSteps(agentUIDs: [uid_t]) -> [UninstallStep] {
-        [.remove(daemonPlist), .remove(agentPlist)]
-            + agentUIDs.map { .bootout("gui/\($0)/\(Identity.agentLabel)") }
-            + [.remove(installDirectory), .bootout("system/\(Identity.daemonLabel)")]
+    public func uninstallSteps() -> [UninstallStep] {
+        [.remove(daemonPlist), .remove(installDirectory), .bootout("system/\(Identity.daemonLabel)")]
     }
 }

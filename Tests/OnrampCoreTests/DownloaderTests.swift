@@ -214,9 +214,10 @@ func redirectsKeepHeadersOnlyWithinTheirOrigin(sameOrigin: Bool) async throws {
 @Test func retriesFetchingTheBootstrapUntilItDecodes() async throws {
     let url = StubURLProtocol.serve([.failure(.notConnectedToInternet), .body("<html>captive portal</html>"), .body(#"{"userland": []}"#)])
 
-    let bootstrap = try await downloader(headers: token, origin: url).fetchBootstrap(from: url, firstDelay: .milliseconds(10))
+    let (bootstrap, json) = try await downloader(headers: token, origin: url).fetchBootstrap(from: url, firstDelay: .milliseconds(10))
 
     #expect(bootstrap.userland.isEmpty)
+    #expect(String(decoding: json, as: UTF8.self) == #"{"userland": []}"#)
     #expect(StubURLProtocol.requests(url).map { $0["Authorization"] } == ["Bearer secret", "Bearer secret", "Bearer secret"])
 }
 

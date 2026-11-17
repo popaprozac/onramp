@@ -33,7 +33,8 @@ public struct Downloader: Sendable {
     /// Fetches and decodes the bootstrap, retrying with backoff until `giveUpAfter`, so the network has time
     /// to come up during Setup Assistant. A captive portal's HTML page counts as a failed attempt.
     /// The deadline doesn't count time the Mac spends asleep, so a long nap doesn't use it up.
-    public func fetchBootstrap(from url: URL, giveUpAfter limit: Duration = .seconds(30 * 60), firstDelay: Duration = .seconds(1)) async throws -> Bootstrap {
+    /// Returns the JSON too, so the daemon can cache exactly what it decoded.
+    public func fetchBootstrap(from url: URL, giveUpAfter limit: Duration = .seconds(30 * 60), firstDelay: Duration = .seconds(1)) async throws -> (bootstrap: Bootstrap, json: Data) {
         let clock = SuspendingClock()
         let deadline = clock.now + limit
         var delay = firstDelay
@@ -44,7 +45,7 @@ public struct Downloader: Sendable {
             do {
                 let (data, response) = try await session.data(for: request(url), delegate: RedirectPolicy(self))
                 try Self.requireSuccess(response)
-                return try Bootstrap.decode(json: data)
+                return (try Bootstrap.decode(json: data), data)
             } catch {
                 lastError = Self.describe(error)
             }

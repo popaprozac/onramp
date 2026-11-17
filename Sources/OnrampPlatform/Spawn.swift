@@ -2,13 +2,13 @@ import Darwin
 import Foundation
 
 public enum Spawn {
-    /// Runs `path` with `arguments`, passing on only stdin, stdout and stderr. With `quiet`, output goes to /dev/null.
+    /// Runs `path` with `arguments`, passing on only stdin, stdout and stderr.
     ///
     /// With `wait`, returns the exit status, or 128 + n for death by signal n, as shells report it.
     /// Without `wait`, starts it in a new session and returns 0. launchd kills a job's process group when
-    /// the job exits, so a script like DEPNotify needs its own session to outlive the daemon or agent.
-    public static func run(_ path: String, _ arguments: [String] = [], wait: Bool, quiet: Bool = false) async throws -> Int32 {
-        let pid = try spawn(path, arguments, newSession: !wait, quiet: quiet)
+    /// the job exits, so a script like DEPNotify needs its own session to outlive the daemon.
+    public static func run(_ path: String, _ arguments: [String] = [], wait: Bool) async throws -> Int32 {
+        let pid = try spawn(path, arguments, newSession: !wait)
         guard wait else {
             reap(pid) { _ in }
             return 0
@@ -18,7 +18,7 @@ public enum Spawn {
         }
     }
 
-    private static func spawn(_ path: String, _ arguments: [String], newSession: Bool, quiet: Bool) throws -> pid_t {
+    private static func spawn(_ path: String, _ arguments: [String], newSession: Bool) throws -> pid_t {
         var attributes: posix_spawnattr_t? = nil
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
@@ -27,11 +27,7 @@ public enum Spawn {
         var fileActions: posix_spawn_file_actions_t? = nil
         posix_spawn_file_actions_init(&fileActions)
         defer { posix_spawn_file_actions_destroy(&fileActions) }
-        posix_spawn_file_actions_addinherit_np(&fileActions, 0)
-        for fd: Int32 in 1...2 {
-            // `quiet` discards output, like launchctl print's, that would only flood the log.
-            if quiet { posix_spawn_file_actions_addopen(&fileActions, fd, "/dev/null", O_WRONLY, 0) } else { posix_spawn_file_actions_addinherit_np(&fileActions, fd) }
-        }
+        for fd: Int32 in 0...2 { posix_spawn_file_actions_addinherit_np(&fileActions, fd) }
 
         let argv = ([path] + arguments).map { strdup($0) } + [nil]
         let envp = ProcessInfo.processInfo.environment.map { strdup("\($0)=\($1)") } + [nil]

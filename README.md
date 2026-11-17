@@ -2,7 +2,7 @@
 
 Bootstraps a Mac at enrollment from an [InstallApplications](https://github.com/macadmins/installapplications)-style `bootstrap.json`.
 
-**Status:** pre-alpha. It can check a `bootstrap.json` and show what a run would do, but cannot install anything yet.
+**Status:** pre-alpha. It can check a `bootstrap.json`, show what a run would do, and run as a LaunchDaemon, but there's no installer package yet.
 
 ## Requirements
 
@@ -66,7 +66,7 @@ Phases run in order: `preflight`, `setupassistant`, then `userland`. Within a ph
 - **`donotwait`:** starts a script and moves on without waiting for it. It's ignored in `preflight`.
 - **`skip_if`:** `x86_64`/`intel` skips the item on Intel Macs, and `arm64`/`apple_silicon` skips it on Apple silicon. onramp applies it to every item type; upstream only applies it to packages.
 - **Downloads:** an item with a `url` is downloaded to `file`, unless `file` already matches `hash`.
-  - There are `1 + retries` attempts, `retrywait` seconds apart.
+  - There are `1 + retries` attempts, `retrywait` seconds apart. With no network, an attempt waits for one instead of failing.
   - The file is checked against `hash` before it's moved into place, so a failed download never leaves a partial file at `file`.
   - Downloaded scripts are made executable (mode 0755).
 
@@ -80,6 +80,48 @@ Phases run in order: `preflight`, `setupassistant`, then `userland`. Within a ph
 
 Upstream ignores failed package installs.
 
+## Configuration
+
+The daemon reads the `io.github.popaprozac.onramp` preferences domain, normally from a configuration profile. A profile's values win over any others.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `JSONURL` | string | Where to download `bootstrap.json`. Must be `https`, because the bootstrap decides what runs as root. |
+| `Bootstrap` | dictionary | The bootstrap itself, with the same keys and values as `bootstrap.json`. Use this or `JSONURL`, not both. |
+| `Headers` | dictionary of strings | Extra request headers, such as `Authorization`. They're sent only to `JSONURL`'s scheme, host and port, and dropped on a redirect to anywhere else. Upstream sends them to every URL. |
+| `MaxAttempts` | integer, at least 1 | How many failed attempts before onramp gives up. Default 3. |
+
+Until `JSONURL` or `Bootstrap` is set, the daemon waits and checks again every 15 seconds. MDMs often install the package before the profile arrives, so this doesn't count as a failure. A profile that's present but invalid does count.
+
+## How the daemon runs
+
+1. **preflight** and **setupassistant** run as soon as the daemon starts, which is normally while Setup Assistant is still on screen.
+2. Userland files are downloaded next, before anyone logs in.
+3. **userland** waits for someone to log in, then for their desktop: the per-user Setup Assistant screens closed, and Dock and Finder running.
+   - It waits as long as Setup Assistant is open.
+   - Without Setup Assistant, it carries on after 2 minutes if Dock or Finder never appears.
+4. At the end it records the result and uninstalls itself (below).
+
+Other rules:
+- **Saved progress.** `/Library/onramp/state.plist` records which phases have finished. A restart or shutdown *between* phases, such as while waiting for someone to log in, costs nothing, and finished phases aren't run again.
+- **Attempts.** A phase that fails, or one cut off part-way by a crash, restart or power loss, counts as a failed attempt. launchd starts the daemon again, which carries on from that phase. At `MaxAttempts` onramp gives up.
+- **Cached bootstrap.** A downloaded bootstrap is saved as `/Library/onramp/bootstrap.json`, readable only by root, and restarts use it without the network, as upstream does.
+- **Root-only files.** Before onramp installs or runs anything as root, it resolves symlinks and requires the file and every directory above it to be owned by root and not writable by group or others. So files in `/tmp` or `/Users/Shared` are refused. Upstream has no such check.
+- **Userscripts** run as the logged-in user inside their GUI session (`launchctl asuser`, then `sudo -u`), so they can open windows.
+- **Logging.** The daemon writes one timestamped line per step to standard output.
+
+When it finishes, whether completed, already provisioned or given up, it writes these keys to `/Library/Preferences/io.github.popaprozac.onramp.plist` for the MDM to read:
+
+| Key | Value |
+|---|---|
+| `Result` | `completed`, `already_provisioned` or `failed` |
+| `Error` | why it failed, naming the phase and item |
+| `FailedAttempts` | how many attempts failed |
+| `FinishedAt` | date |
+| `Version` | onramp's version |
+
+Then it removes its LaunchDaemon plist and `/Library/onramp`, and unloads itself last. The log is kept.
+
 ## Identifiers
 
 These are fixed because MDM profiles and launchd plists reference them:
@@ -88,8 +130,8 @@ These are fixed because MDM profiles and launchd plists reference them:
 |---|---|
 | Bundle ID / managed-preferences domain | `io.github.popaprozac.onramp` |
 | LaunchDaemon label | `io.github.popaprozac.onramp.daemon` |
-| LaunchAgent label | `io.github.popaprozac.onramp.agent` |
-| XPC Mach service | `io.github.popaprozac.onramp.xpc` |
+
+onramp installs no LaunchAgent. It runs userland in the user's session from the daemon.
 
 ## License
 

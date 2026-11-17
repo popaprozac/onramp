@@ -6,13 +6,18 @@ public enum Uninstaller {
     /// Returns a description of each step that failed. When the last step boots out the daemon, this process ends there.
     public static func run(_ steps: [Layout.UninstallStep], bootout: (String) async -> Bool = launchctlBootout) async -> [String] {
         var failures: [String] = []
+        // Logged as they happen, since the last step ends this process before it can return.
+        func failed(_ step: String) {
+            failures.append(step)
+            Log.line("uninstall step failed: \(step)")
+        }
         for step in steps {
             switch step {
             case let .remove(path):
                 guard FileManager.default.fileExists(atPath: path) else { continue }
-                do { try FileManager.default.removeItem(atPath: path) } catch { failures.append("remove \(path): \(error.localizedDescription)") }
+                do { try FileManager.default.removeItem(atPath: path) } catch { failed("remove \(path): \(error.localizedDescription)") }
             case let .bootout(target):
-                if !(await bootout(target)) { failures.append("bootout \(target)") }
+                if !(await bootout(target)) { failed("bootout \(target)") }
             }
         }
         return failures
