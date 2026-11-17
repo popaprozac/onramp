@@ -2,7 +2,7 @@
 
 Bootstraps a Mac at enrollment from an [InstallApplications](https://github.com/macadmins/installapplications)-style `bootstrap.json`.
 
-**Status:** pre-alpha. It can check a `bootstrap.json`, show what a run would do, and run as a LaunchDaemon, but there's no installer package yet.
+**Status:** pre-alpha. It builds an installer package and runs end to end, but the package isn't signed yet, which an MDM needs to install it (see [Building the package](#building-the-package)).
 
 ## Requirements
 
@@ -15,6 +15,27 @@ Bootstraps a Mac at enrollment from an [InstallApplications](https://github.com/
 swift build
 swift test
 ```
+
+## Building the package
+
+```bash
+pkg/build.sh
+```
+
+This writes `build/onramp-<version>.pkg`, a distribution package with a universal binary for Apple silicon and Intel. It installs:
+- `/Library/onramp/onramp`
+- `/Library/LaunchDaemons/io.github.popaprozac.onramp.daemon.plist`, which sends the daemon's output to `/var/log/onramp/onramp.log`
+- a postinstall script that creates `/var/log/onramp` and loads the daemon. On a reinstall it reloads the daemon, which carries on from its saved progress.
+
+Everything is installed as root:wheel. The package isn't signed yet. That's fine for `sudo installer -pkg … -target /`, but an MDM's InstallEnterpriseApplication needs a package signed with a Developer ID Installer certificate.
+
+On Macs where macOS tags built files with `com.apple.provenance`, `pkgbuild` prints `write: Permission denied` a few times. That's harmless: the package installs no stray `._` files.
+
+## Deploying
+
+Send the package and two profiles from your MDM, in any order. The daemon waits for its profile if the package arrives first.
+- `examples/onramp-config.mobileconfig` sets onramp's [configuration](#configuration). Replace its `JSONURL`, and its `PayloadUUID`s with your own.
+- `examples/onramp-background-items.mobileconfig` marks onramp's LaunchDaemon as managed, so users don't get a "Background Items Added" notice for it during enrollment.
 
 ## Checking a bootstrap.json
 

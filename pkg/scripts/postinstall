@@ -1,0 +1,15 @@
+#!/bin/sh
+# Starts onramp's daemon once the package is installed. $3 is the volume it was installed on.
+set -eu
+
+label=io.github.popaprozac.onramp.daemon
+
+# launchd won't create the log's folder itself.
+install -d -m 755 -o root -g wheel "$3/private/var/log/onramp"
+
+# On another volume, that Mac's launchd loads the daemon when it boots.
+[ "$3" = "/" ] || exit 0
+
+# A reinstall replaces a running daemon. It picks up again from its saved progress.
+launchctl bootout "system/$label" 2>/dev/null || true
+launchctl bootstrap system "/Library/LaunchDaemons/$label.plist"
