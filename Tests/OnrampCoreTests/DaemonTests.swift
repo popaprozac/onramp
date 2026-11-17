@@ -145,3 +145,12 @@ func daemon(_ environment: FakeEnvironment, maxAttempts: Int = 3) async -> Daemo
 func desktopIsReadyOnlyWithDockAndFinderAndNoSetupAssistant(running: [String], state: DesktopState) {
     #expect(DesktopState(running: Set(running)) == state)
 }
+
+@Test func failuresThatDontStopTheRunAreReportedAtTheEnd() async throws {
+    // A failure in a phase finished before a restart, and another in userland now.
+    let earlier = RunState(completed: [.preflight, .setupassistant], failedItems: [#"setupassistant "sa": exited 4"#])
+    let env = FakeEnvironment(state: earlier, bootstrap: try enrollment(), exitCodes: ["/u.sh": 2])
+
+    #expect(await daemon(env) == .finished(Status(result: .completedWithFailures, error: #"setupassistant "sa": exited 4; userland "u": exited 2"#)))
+    #expect(await env.events.last == "finish completed_with_failures failed=0")
+}

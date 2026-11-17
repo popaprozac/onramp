@@ -155,7 +155,7 @@ func scratchLayout(in dir: URL) throws -> Layout {
     let layout = try scratchLayout(in: dir)
     let log = BootoutLog()
 
-    let failures = await Uninstaller.run(layout.uninstallSteps()) { target in
+    let failures = await Uninstaller.run(layout.uninstallSteps(keepBinary: false)) { target in
         await log.record(target, layout)
         return true
     }
@@ -177,7 +177,7 @@ func scratchLayout(in dir: URL) throws -> Layout {
     defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: layout.launchDaemons) }
     let log = BootoutLog()
 
-    let failures = await Uninstaller.run(layout.uninstallSteps()) { target in
+    let failures = await Uninstaller.run(layout.uninstallSteps(keepBinary: false)) { target in
         await log.record(target, layout)
         return true
     }
@@ -195,7 +195,7 @@ func scratchLayout(in dir: URL) throws -> Layout {
     try FileManager.default.removeItem(atPath: layout.installDirectory)
     try FileManager.default.removeItem(atPath: layout.daemonPlist)
 
-    #expect(await Uninstaller.run(layout.uninstallSteps()) { _ in true }.isEmpty)
+    #expect(await Uninstaller.run(layout.uninstallSteps(keepBinary: false)) { _ in true }.isEmpty)
 }
 
 @Test(.timeLimit(.minutes(1)))
@@ -227,4 +227,15 @@ func consoleUserUpdatesStartWithTheCurrentUserAndStopWhenCancelled() async {
         DesktopState(running: Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))) == .ready
     }
     #expect(await Desktop.waitUntilReady(timeout: .milliseconds(100)) == expected)
+}
+
+@Test func afterAFailureOnlyTheBinaryStays() async throws {
+    let dir = try scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let layout = try scratchLayout(in: dir)
+    for path in [layout.binary, layout.cachedBootstrap] { FileManager.default.createFile(atPath: path, contents: Data()) }
+
+    #expect(await Uninstaller.run(layout.uninstallSteps(keepBinary: true)) { _ in true }.isEmpty)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: layout.installDirectory) == ["onramp"])
+    #expect(!FileManager.default.fileExists(atPath: layout.daemonPlist))
 }

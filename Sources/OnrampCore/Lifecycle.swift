@@ -10,12 +10,15 @@ public struct RunState: Codable, Equatable, Sendable {
     public var completed: [Phase]
     /// The phase running now. If it's still set at launch, the last launch was cut off part-way.
     public var running: Phase?
+    /// Items in finished phases that failed without stopping the run, because their fail_policy allowed it.
+    public var failedItems: [String]
 
-    public init(attempts: Int = 0, lastError: String? = nil, completed: [Phase] = [], running: Phase? = nil) {
+    public init(attempts: Int = 0, lastError: String? = nil, completed: [Phase] = [], running: Phase? = nil, failedItems: [String] = []) {
         self.attempts = attempts
         self.lastError = lastError
         self.completed = completed
         self.running = running
+        self.failedItems = failedItems
     }
 
     /// The phases still to run, in order.
@@ -35,9 +38,13 @@ public struct RunState: Codable, Equatable, Sendable {
 
     public mutating func start(_ phase: Phase) { running = phase }
 
-    public mutating func complete(_ phase: Phase) {
+    /// `failedItems` are the phase's items that failed without stopping the run.
+    public mutating func complete(_ phase: Phase, failedItems: [String] = []) {
         running = nil
-        if !completed.contains(phase) { completed.append(phase) }
+        if !completed.contains(phase) {
+            completed.append(phase)
+            self.failedItems += failedItems
+        }
     }
 
     /// A failed phase, or a failure before any phase. Returns the status to record before uninstalling when the
@@ -65,9 +72,14 @@ public struct RunState: Codable, Equatable, Sendable {
 public struct Status: Equatable, Sendable {
     public enum Result: String, Sendable {
         case completed
+        /// Every phase ran, but items whose fail_policy let them fail did fail. Not a success.
+        case completedWithFailures = "completed_with_failures"
         case alreadyProvisioned = "already_provisioned"
         case failed
     }
+
+    /// Every key the status can write. Writing a status clears the others, so an old `Error` doesn't linger.
+    public static let keys = ["Result", "Error", "FailedAttempts", "FinishedAt", "Version"]
 
     public let result: Result
     public let error: String?
@@ -77,24 +89,37 @@ public struct Status: Equatable, Sendable {
         self.error = error
     }
 
+    /// Completed, or completed with failures when any item failed without stopping the run.
+    public static func completed(failedItems: [String]) -> Status {
+        failedItems.isEmpty ? Status(result: .completed) : Status(result: .completedWithFailures, error: failedItems.joined(separator: "; "))
+    }
+
     public init(_ report: Report) {
         switch report.outcome {
-        case .completed: self.init(result: .completed)
+        case .completed: self = .completed(failedItems: report.failedItems)
         case .alreadyProvisioned: self.init(result: .alreadyProvisioned)
-        case .failed:
-            guard let last = report.results.last, case let .failed(reason, _) = last.status else {
-                self.init(result: .failed, error: "failed")
-                return
-            }
-            self.init(result: .failed, error: "\(last.phase.rawValue) \"\(last.name)\": \(reason)")
+        case .failed: self.init(result: .failed, error: report.failedItems.last ?? "failed")
         }
     }
+
+    /// Only a real success removes onramp entirely. Anything else leaves the binary for IT to rerun.
+    public var isSuccess: Bool { result == .completed || result == .alreadyProvisioned }
 
     /// The keys written to /Library/Preferences/<domain>.plist.
     public func preferences(failedAttempts: Int, finishedAt: Date) -> [String: Any] {
         var values: [String: Any] = ["Result": result.rawValue, "FailedAttempts": failedAttempts, "FinishedAt": finishedAt, "Version": Identity.version]
         if let error { values["Error"] = error }
         return values
+    }
+}
+
+extension Report {
+    /// Each failed item as `phase "name": reason`, in order.
+    public var failedItems: [String] {
+        results.compactMap { result in
+            guard case let .failed(reason, _) = result.status else { return nil }
+            return "\(result.phase.rawValue) \"\(result.name)\": \(reason)"
+        }
     }
 }
 
@@ -110,7 +135,9 @@ public struct Layout: Sendable {
         self.launchDaemons = launchDaemons
     }
 
+    public var binary: String { installDirectory + "/onramp" }
     public var stateFile: String { installDirectory + "/state.plist" }
+    public var cachedBootstrap: String { installDirectory + "/bootstrap.json" }
     public var daemonPlist: String { "\(launchDaemons)/\(Identity.daemonLabel).plist" }
 
     public enum UninstallStep: Equatable, Sendable {
@@ -120,8 +147,11 @@ public struct Layout: Sendable {
     }
 
     /// Upstream's cleanup order. The plist goes first, so nothing loads again even if a later step fails.
-    /// The daemon's own bootout is last because it ends this process. Logs in /var/log/onramp are kept.
-    public func uninstallSteps() -> [UninstallStep] {
-        [.remove(daemonPlist), .remove(installDirectory), .bootout("system/\(Identity.daemonLabel)")]
+    /// The daemon's own bootout is last because it ends the daemon. Logs in /var/log/onramp are kept.
+    /// With `keepBinary`, used whenever a run didn't succeed, only the daemon and its files go, so IT can still
+    /// run `sudo /Library/onramp/onramp run`.
+    public func uninstallSteps(keepBinary: Bool) -> [UninstallStep] {
+        let files: [UninstallStep] = keepBinary ? [.remove(stateFile), .remove(cachedBootstrap)] : [.remove(installDirectory)]
+        return [.remove(daemonPlist)] + files + [.bootout("system/\(Identity.daemonLabel)")]
     }
 }

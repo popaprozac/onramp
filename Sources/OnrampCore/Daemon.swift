@@ -63,7 +63,7 @@ public struct Daemon: Sendable {
             let report = await runner(for: user).run(bootstrap, phases: [phase]) { await environment.log("\($0)") }
             switch report.outcome {
             case .completed:
-                state.complete(phase)
+                state.complete(phase, failedItems: report.failedItems)
                 await environment.save(state)
             case .alreadyProvisioned:
                 state.complete(phase)
@@ -72,7 +72,7 @@ public struct Daemon: Sendable {
                 return await fail(Status(report).error ?? "\(phase.rawValue) failed", &state)
             }
         }
-        return await finish(Status(result: .completed), state)
+        return await finish(.completed(failedItems: state.failedItems), state)
     }
 
     private func runner(for user: ConsoleUser?) -> Runner {

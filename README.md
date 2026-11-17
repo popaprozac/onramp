@@ -48,12 +48,10 @@ Warnings (it still exits 0):
 swift run onramp run --dry-run path/to/bootstrap.json
 ```
 
-This checks the file first, as `validate` does, and stops if there are errors. Then it goes through every phase and prints what would happen to each item. It doesn't download, install or run anything, and it doesn't need root.
+This checks the file first, as `validate` does, and stops if there are errors. Then it goes through every phase and prints what would happen to each item. It doesn't download, install or run anything, and it doesn't need root. Without a path, it uses the bootstrap the profile points at.
 
 - Package receipts are read from this Mac with `pkgutil`, so a package skipped because of its receipt really would be skipped here.
-- Every preflight script is assumed to exit non-zero, so all phases are shown.
-
-`run` without `--dry-run` isn't supported yet.
+- Every preflight script is assumed to exit non-zero, so all phases are shown. `--skip-preflight` leaves preflight out.
 
 ## Phases
 
@@ -110,17 +108,33 @@ Other rules:
 - **Userscripts** run as the logged-in user inside their GUI session (`launchctl asuser`, then `sudo -u`), so they can open windows.
 - **Logging.** The daemon writes one timestamped line per step to standard output.
 
-When it finishes, whether completed, already provisioned or given up, it writes these keys to `/Library/Preferences/io.github.popaprozac.onramp.plist` for the MDM to read:
+When it finishes it writes these keys to `/Library/Preferences/io.github.popaprozac.onramp.plist` for the MDM to read. Keys a result doesn't set are cleared, so nothing from an earlier run lingers.
 
 | Key | Value |
 |---|---|
-| `Result` | `completed`, `already_provisioned` or `failed` |
-| `Error` | why it failed, naming the phase and item |
+| `Result` | `completed`, `already_provisioned`, `completed_with_failures` (every phase ran, but items whose `fail_policy` let them fail did fail) or `failed` |
+| `Error` | what failed, naming the phase and item; several are separated by `; ` |
 | `FailedAttempts` | how many attempts failed |
 | `FinishedAt` | date |
 | `Version` | onramp's version |
 
-Then it removes its LaunchDaemon plist and `/Library/onramp`, and unloads itself last. The log is kept.
+Then it removes its LaunchDaemon plist and unloads itself last. The log in `/var/log/onramp` is kept.
+- **After `completed` or `already_provisioned`**, it also removes `/Library/onramp`.
+- **After anything else**, it removes only its state and cached bootstrap, and keeps `/Library/onramp/onramp` so IT can rerun setup.
+
+## Rerunning setup (IT)
+
+```bash
+sudo /Library/onramp/onramp run [path/to/bootstrap.json] [--skip-preflight]
+```
+
+For when setup didn't finish, without reimaging: from a Self Service or Munki script, or in Terminal at the user's desktop.
+- **Bootstrap:** without a path, it fetches the bootstrap the profile points at, fresh, never the daemon's cached copy.
+- **The daemon:** if onramp's daemon is still loaded, `run` stops it first, so the two never run at once.
+- **The run:** every phase runs in the foreground, with one timestamped line per item. Userscripts run as the logged-in user, and preflight saying "already provisioned" stops the run, as in the daemon. `--skip-preflight` runs setupassistant and userland anyway.
+- **Afterwards:** `run` writes the same status keys as the daemon.
+  - On `completed` or `already_provisioned`, it removes onramp the same way and exits 0.
+  - On anything else it exits 1 and changes nothing. A daemon it stopped comes back at the next boot and carries on from its own saved progress.
 
 ## Identifiers
 

@@ -28,9 +28,11 @@ public enum Uninstaller {
     }
 
     /// Records how onramp finished in /Library/Preferences/<domain>.plist, where an MDM can read it. Needs root.
-    public static func writeStatus(_ values: [String: Any], domain: String = Identity.domain) throws {
-        for (key, value) in values {
-            CFPreferencesSetValue(key as CFString, value as CFPropertyList, domain as CFString, kCFPreferencesAnyUser, kCFPreferencesAnyHost)
+    /// Status keys this status doesn't set are removed, so nothing from an earlier run lingers.
+    public static func writeStatus(_ status: Status, failedAttempts: Int, domain: String = Identity.domain) throws {
+        let values = status.preferences(failedAttempts: failedAttempts, finishedAt: Date())
+        for key in Status.keys {
+            CFPreferencesSetValue(key as CFString, values[key] as CFPropertyList?, domain as CFString, kCFPreferencesAnyUser, kCFPreferencesAnyHost)
         }
         guard CFPreferencesSynchronize(domain as CFString, kCFPreferencesAnyUser, kCFPreferencesAnyHost) else {
             throw PlatformError("could not write the status to /Library/Preferences/\(domain).plist")

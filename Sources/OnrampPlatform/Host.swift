@@ -37,3 +37,17 @@ extension Host {
         return values
     }
 }
+
+extension Host {
+    /// Whether launchd has `service`, like `system/<label>`, loaded. Read-only.
+    public static func isLoaded(_ service: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["print", service]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+}

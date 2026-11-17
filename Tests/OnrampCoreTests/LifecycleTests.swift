@@ -70,7 +70,7 @@ import Testing
     let dir = try scratchDirectory()
     defer { try? FileManager.default.removeItem(at: dir) }
     let file = dir.appendingPathComponent("state.plist")
-    let state = RunState(attempts: 1, lastError: "x", completed: [.preflight], running: .setupassistant)
+    let state = RunState(attempts: 1, lastError: "x", completed: [.preflight], running: .setupassistant, failedItems: [#"preflight "p": exited 1"#])
 
     #expect(RunState.load(from: file) == RunState())
     try state.save(to: file)
@@ -82,9 +82,45 @@ import Testing
 }
 
 @Test func uninstallFollowsUpstreamOrder() {
-    #expect(Layout.system.uninstallSteps() == [
+    #expect(Layout.system.uninstallSteps(keepBinary: false) == [
         .remove("/Library/LaunchDaemons/io.github.popaprozac.onramp.daemon.plist"),
         .remove("/Library/onramp"),
         .bootout("system/io.github.popaprozac.onramp.daemon"),
     ])
+    // After anything but a success, the binary stays for IT.
+    #expect(Layout.system.uninstallSteps(keepBinary: true) == [
+        .remove("/Library/LaunchDaemons/io.github.popaprozac.onramp.daemon.plist"),
+        .remove("/Library/onramp/state.plist"),
+        .remove("/Library/onramp/bootstrap.json"),
+        .bootout("system/io.github.popaprozac.onramp.daemon"),
+    ])
+}
+
+@Test func itemsAllowedToFailMakeTheRunCompleteWithFailures() {
+    let report = Report(outcome: .completed, results: [
+        ItemResult(phase: .userland, name: "ok", status: .done("exited 0")),
+        ItemResult(phase: .userland, name: "dock", status: .failed("exited 1", stopped: false)),
+        ItemResult(phase: .userland, name: "printer", status: .failed("could not run: boom", stopped: false)),
+    ])
+    #expect(Status(report) == Status(result: .completedWithFailures, error: #"userland "dock": exited 1; userland "printer": could not run: boom"#))
+    #expect(Status(Report(outcome: .completed, results: [])) == Status(result: .completed))
+}
+
+@Test(arguments: [(Status.Result.completed, true), (.alreadyProvisioned, true), (.completedWithFailures, false), (.failed, false)])
+func onlyARealSuccessCounts(result: Status.Result, success: Bool) {
+    #expect(Status(result: result).isSuccess == success)
+}
+
+@Test func everyStatusKeyIsKnownSoStaleOnesCanBeCleared() {
+    let values = Status(result: .failed, error: "boom").preferences(failedAttempts: 1, finishedAt: Date())
+    #expect(Set(values.keys) == Set(Status.keys))
+}
+
+@Test func failuresAllowedInAPhaseSurviveARestart() throws {
+    var state = RunState()
+    state.start(.setupassistant)
+    state.complete(.setupassistant, failedItems: [#"setupassistant "a": exited 1"#])
+    state.complete(.setupassistant, failedItems: ["counted twice"])  // completing again adds nothing
+    #expect(state.failedItems == [#"setupassistant "a": exited 1"#])
+    #expect(Status.completed(failedItems: state.failedItems) == Status(result: .completedWithFailures, error: #"setupassistant "a": exited 1"#))
 }
