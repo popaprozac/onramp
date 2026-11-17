@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Marks onramp's LaunchDaemon as managed, so users don't get a "Background Items Added" notice for it
-     during enrollment. Replace the PayloadUUIDs with your own (uuidgen). -->
+     during enrollment. Replace the PayloadUUIDs with your own (uuidgen).
+     C7Z9CQRSHN is the Team ID that signs onramp's released packages. If you build and sign onramp
+     yourself, use your own Team ID. For an unsigned build, use RuleType Label with
+     io.github.popaprozac.onramp.daemon, which is weaker: it matches anything using that label. -->
 <plist version="1.0">
 <dict>
     <key>PayloadDisplayName</key>
@@ -33,11 +36,11 @@
             <array>
                 <dict>
                     <key>RuleType</key>
-                    <string>Label</string>
+                    <string>TeamIdentifier</string>
                     <key>RuleValue</key>
-                    <string>io.github.popaprozac.onramp.daemon</string>
+                    <string>C7Z9CQRSHN</string>
                     <key>Comment</key>
-                    <string>onramp's LaunchDaemon</string>
+                    <string>onramp, signed by its publisher</string>
                 </dict>
             </array>
         </dict>
