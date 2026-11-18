@@ -44,16 +44,14 @@ public struct SystemDaemonEnvironment: DaemonEnvironment {
         return Downloader(headers: config.headers, headerOrigin: url)
     }
 
-    /// The bootstrap the config points at, fetched now or embedded, and validated. The JSON comes back too
-    /// when it was fetched, so the daemon can cache it.
-    public static func freshBootstrap(_ config: Config, downloader: Downloader) async throws -> (bootstrap: Bootstrap, json: Data?) {
+    /// The bootstrap the config points at, fetched now or embedded, and validated.
+    public static func freshBootstrap(_ config: Config, downloader: Downloader) async throws -> Bootstrap {
         switch config.source {
         case let .embedded(bootstrap):
-            return (try validated(bootstrap), nil)
+            return try validated(bootstrap)
         case let .url(url):
             Log.line("fetching the bootstrap from \(url.host() ?? "its host")")
-            let (bootstrap, json) = try await downloader.fetchBootstrap(from: url)
-            return (try validated(bootstrap), json)
+            return try await validated(downloader.fetchBootstrap(from: url).bootstrap)
         }
     }
 
@@ -74,20 +72,46 @@ public struct SystemDaemonEnvironment: DaemonEnvironment {
         do { try state.save(to: stateFile) } catch { Log.line("could not save \(stateFile.path): \(error)") }
     }
 
-    /// A downloaded bootstrap is cached, as upstream does, so a restart uses the same file without the network.
+    /// Fetched again on every launch, as InstallApplications and go-installapplications do, so a fix to the JSON takes
+    /// effect on the next attempt. The last good copy is kept and used only when fetching fails or takes more than two
+    /// minutes, so a restart without a network carries on. A fetched bootstrap that fails validation is an error,
+    /// never a reason to fall back to the old one.
     public func loadBootstrap() async throws -> Bootstrap {
         let config = try config.get()
-        if case .url = config.source, let json = try? Data(contentsOf: cachedBootstrap), let cached = try? Bootstrap.decode(json: json) {
-            Log.line("using the bootstrap saved at \(cachedBootstrap.path)")
-            return try Self.validated(cached)
+        guard case let .url(url) = config.source else {
+            return try await Self.freshBootstrap(config, downloader: downloader)
         }
-        let (bootstrap, json) = try await Self.freshBootstrap(config, downloader: downloader)
-        if let json {
+        let downloader = downloader
+        let (json, fromCache) = try await Self.fetchOrCached(cached: try? Data(contentsOf: cachedBootstrap), cacheAfter: .seconds(120)) {
+            Log.line("fetching the bootstrap from \(url.host() ?? "its host")")
+            return try await downloader.fetchBootstrap(from: url).json
+        }
+        let bootstrap = try Self.validated(Bootstrap.decode(json: json))
+        if !fromCache {
             // Only root may read it: item URLs can carry tokens.
             try json.write(to: cachedBootstrap, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: cachedBootstrap.path)
         }
         return bootstrap
+    }
+
+    /// The fetched JSON, or `cached` when fetching fails or takes longer than `cacheAfter`. With nothing cached,
+    /// it waits for the fetch however long it takes.
+    static func fetchOrCached(cached: Data?, cacheAfter: Duration,
+                              fetch: @escaping @Sendable () async throws -> Data) async throws -> (json: Data, fromCache: Bool) {
+        guard let cached else { return (try await fetch(), false) }
+        let fetching = Task { try await fetch() }
+        let deadline = Task {
+            try await Task.sleep(for: cacheAfter)
+            fetching.cancel()
+        }
+        defer { deadline.cancel() }
+        do {
+            return (try await fetching.value, false)
+        } catch {
+            Log.line("couldn't fetch the bootstrap in time (\(error)); using the copy saved from the last fetch")
+            return (cached, true)
+        }
     }
 
     public func actions(for user: ConsoleUser?) -> any Actions { SystemActions(downloader: downloader, user: user) }

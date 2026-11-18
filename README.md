@@ -137,7 +137,7 @@ Until `JSONURL` or `Bootstrap` is set, the daemon waits and checks again every 1
 Other rules:
 - **Saved progress.** `/Library/onramp/state.plist` records which phases have finished. A restart or shutdown *between* phases, such as while waiting for someone to log in, costs nothing, and finished phases aren't run again.
 - **Attempts.** A phase that fails, or one cut off part-way by a crash, restart or power loss, counts as a failed attempt. launchd starts the daemon again, which carries on from that phase. At `MaxAttempts` onramp gives up.
-- **Cached bootstrap.** A downloaded bootstrap is saved as `/Library/onramp/bootstrap.json`, readable only by root, and restarts use it without the network, as upstream does.
+- **Bootstrap download.** Each time the daemon starts it downloads the bootstrap again, as upstream does, so a fix to `JSONURL`'s file takes effect on the next attempt. The last good copy is saved as `/Library/onramp/bootstrap.json`, readable only by root. It's used only when the download fails or takes more than 2 minutes, so a restart with no network still carries on. A downloaded bootstrap with errors fails the attempt; it never falls back to the saved copy.
 - **Root-only files.** Before onramp installs or runs anything as root, it resolves symlinks and requires the file and every directory above it to be owned by root and not writable by group or others. So files in `/tmp` or `/Users/Shared` are refused. Upstream has no such check.
 - **Userscripts** run as the logged-in user inside their GUI session (`launchctl asuser`, then `sudo -u`), so they can open windows.
 - **Logging.** The daemon writes one timestamped line per step to standard output.
