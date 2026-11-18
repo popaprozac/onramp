@@ -239,3 +239,40 @@ func consoleUserUpdatesStartWithTheCurrentUserAndStopWhenCancelled() async {
     #expect(try FileManager.default.contentsOfDirectory(atPath: layout.installDirectory) == ["onramp"])
     #expect(!FileManager.default.fileExists(atPath: layout.daemonPlist))
 }
+
+struct FetchFailed: Error {}
+let saved = Data("saved".utf8)
+let fetched = Data("fetched".utf8)
+
+@Test func aFetchedBootstrapReplacesTheSavedOne() async throws {
+    let result = try await SystemDaemonEnvironment.fetchOrCached(cached: saved, cacheAfter: .seconds(10)) { fetched }
+    #expect(result == (fetched, false))
+}
+
+@Test func aFailedFetchFallsBackToTheSavedBootstrap() async throws {
+    let result = try await SystemDaemonEnvironment.fetchOrCached(cached: saved, cacheAfter: .seconds(10)) { throw FetchFailed() }
+    #expect(result == (saved, true))
+}
+
+@Test func aFailedFetchWithNothingSavedFails() async {
+    await #expect(throws: FetchFailed.self) {
+        try await SystemDaemonEnvironment.fetchOrCached(cached: nil, cacheAfter: .seconds(10)) { throw FetchFailed() }
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func aSlowFetchFallsBackToTheSavedBootstrap() async throws {
+    let result = try await SystemDaemonEnvironment.fetchOrCached(cached: saved, cacheAfter: .milliseconds(50)) {
+        try await Task.sleep(for: .seconds(120))
+        return fetched
+    }
+    #expect(result == (saved, true))
+}
+
+@Test func aSlowFetchWithNothingSavedIsWaitedFor() async throws {
+    let result = try await SystemDaemonEnvironment.fetchOrCached(cached: nil, cacheAfter: .milliseconds(10)) {
+        try await Task.sleep(for: .milliseconds(200))
+        return fetched
+    }
+    #expect(result == (fetched, false))
+}

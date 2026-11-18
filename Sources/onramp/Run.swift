@@ -44,7 +44,7 @@ struct Run: AsyncParsableCommand {
     private func load(_ config: Result<Config, ConfigError>, _ downloader: Downloader) async throws -> Bootstrap {
         if let path { return try loadBootstrap(path) }
         do {
-            return try await SystemDaemonEnvironment.freshBootstrap(config.get(), downloader: downloader).bootstrap
+            return try await SystemDaemonEnvironment.freshBootstrap(config.get(), downloader: downloader)
         } catch {
             print("error: \(error). Pass a bootstrap.json path to run one directly.")
             throw ExitCode.failure
